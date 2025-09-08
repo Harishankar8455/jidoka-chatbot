@@ -1,0 +1,144 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+}
+
+.app-header {
+  background-color: #20232a;
+  color: white;
+  padding: 1rem;
+  text-align: center;
+}
+
+.app-header h1 {
+  margin: 0 0 0.5rem 0;
+}
+
+.app-header p {
+  margin: 0;
+  opacity: 0.8;
+}
+
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 1rem;
+  box-sizing: border-box;
+}
+
+.conversation {
+  flex: 1;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border: 1px solid #e1e4e8;
+  border-radius: 8px;
+  background-color: #f6f8fa;
+}
+
+.empty-state {
+  text-align: center;
+  color: #6a737d;
+}
+
+.empty-state ul {
+  text-align: left;
+  display: inline-block;
+  margin-top: 0.5rem;
+}
+
+.empty-state li {
+  margin-bottom: 0.5rem;
+}
+
+.message {
+  margin-bottom: 1rem;
+}
+
+.message-content {
+  padding: 0.75rem;
+  border-radius: 8px;
+  line-height: 1.4;
+}
+
+.message.user .message-content {
+  background-color: #e3f2fd;
+  text-align: right;
+}
+
+.message.assistant .message-content {
+  background-color: #f5f5f5;
+}
+
+.typing-indicator::after {
+  content: '...';
+  animation: typing 1.5s infinite;
+}
+
+@keyframes typing {
+  0% { content: '.'; }
+  33% { content: '..'; }
+  66% { content: '...'; }
+}
+
+.error-message {
+  color: #d73a49;
+  padding: 0.5rem;
+  margin-bottom: 1rem;
+  border: 1px solid #d73a49;
+  border-radius: 4px;
+  background-color: #ffebee;
+}
+
+.input-form {
+  margin-top: auto;
+}
+
+.input-container {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.input-container input {
+  flex: 1;
+  padding: 0.75rem;
+  border: 1px solid #e1e4e8;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
+.input-container button {
+  padding: 0.75rem 1.5rem;
+  background-color: #0366d6;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.input-container button:disabled {
+  background-color: #79b8ff;
+  cursor: not-allowed;
+}
+
+.clear-button {
+  margin-top: 1rem;
+  padding: 0.5rem 1rem;
+  background-color: #6a737d;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  align-self: flex-end;
+}
+
+.clear-button:hover {
+  background-color: #5a6268;
+}
