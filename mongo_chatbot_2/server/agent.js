@@ -21,26 +21,100 @@ try {
   process.exit(1);
 }
 
+// Test the Gemini API
+async function testGeminiAPI() {
+  try {
+    const testPrompt = "Hello, this is a test message.";
+    const result = await model.generateContent(testPrompt);
+    const response = await result.response;
+    console.log("Gemini API test successful");
+    return true;
+  } catch (error) {
+    console.error("Gemini API test failed:", error.message);
+    return false;
+  }
+}
+
+// Function to get defect information from Defects collection
+async function getDefectInfo(client) {
+  try {
+    const db = client.db(process.env.DB_NAME || "test");
+    const defectsCollection = db.collection("Defects");
+
+    const defects = await defectsCollection.find({}).toArray();
+
+    // Create a mapping of defect_id to defect information
+    const defectMap = {};
+    defects.forEach(defect => {
+      defectMap[defect.defect_id] = {
+        defect_class: defect.defect_class,
+        description: defect.description,
+        is_acceptable: defect.is_acceptable,
+        defect_type: defect.defect_type
+      };
+    });
+
+    return defectMap;
+  } catch (error) {
+    console.error("Error fetching defect information:", error.message);
+    return {};
+  }
+}
+
+// Function to map defect occurrences with defect information
+function mapDefectOccurrences(defectOccurrences, defectMap, defectType) {
+  const mappedDefects = {};
+
+  if (defectOccurrences && Array.isArray(defectOccurrences)) {
+    defectOccurrences.forEach((count, index) => {
+      const defectId = index + 1; // Index + 1 corresponds to defect_id (since arrays are 0-indexed)
+      if (count > 0 && defectMap[defectId]) {
+        const defectInfo = defectMap[defectId];
+        mappedDefects[defectInfo.defect_class] = {
+          count: count,
+          description: defectInfo.description,
+          is_acceptable: defectInfo.is_acceptable,
+          defect_type: defectType || defectInfo.defect_type
+        };
+      } else if (count > 0) {
+        // If defect ID not found in mapping, still include the count with unknown defect
+        mappedDefects[`Unknown_Defect_${defectId}`] = {
+          count: count,
+          description: `Unknown defect with ID ${defectId}`,
+          is_acceptable: "unknown",
+          defect_type: defectType || "unknown"
+        };
+      }
+    });
+  }
+
+  return mappedDefects;
+}
+
 // Enhanced MongoDB query function
 async function queryMongoDB(query) {
+  let client;
   try {
     if (!process.env.MONGODB_URI) {
       throw new Error("MONGODB_URI is not set in environment variables");
     }
 
-    const client = new MongoClient(process.env.MONGODB_URI);
+    client = new MongoClient(process.env.MONGODB_URI);
     await client.connect();
 
     const db = client.db(process.env.DB_NAME || "test");
     const collection = db.collection("Reports");
+
+    // Get defect information
+    const defectMap = await getDefectInfo(client);
 
     // Parse query to determine if we need special handling
     const queryAnalysis = analyzeQuery(query);
 
     let results;
 
-    if (queryAnalysis.needsAggregation) {
-      // Handle aggregation queries (max, min, sort, etc.)
+    if (queryAnalysis.needsAggregation || queryAnalysis.isComponentList) {
+      // Handle aggregation queries and component listing
       results = await handleAggregationQuery(collection, queryAnalysis);
     } else {
       // Handle regular find queries
@@ -53,27 +127,68 @@ async function queryMongoDB(query) {
       results = await collection.find(mongoQuery).limit(20).toArray();
     }
 
-    await client.close();
+    // Map defect occurrences to defect information
+    const enhancedResults = results.map(item => {
+      const enhancedItem = { ...item };
 
-    if (results.length === 0) {
+      // Map defect_occurrences
+      if (item.defect_occurrences) {
+        enhancedItem.mapped_defect_occurrences = mapDefectOccurrences(
+          item.defect_occurrences,
+          defectMap,
+          "object_detection"
+        );
+      }
+
+      // Map ocr_defect_occurrences
+      if (item.ocr_defect_occurrences) {
+        enhancedItem.mapped_ocr_defect_occurrences = mapDefectOccurrences(
+          item.ocr_defect_occurrences,
+          defectMap,
+          "ocr"
+        );
+      }
+
+      // Map dimensional_defect_occurrences (if it's an array)
+      if (item.dimensional_defect_occurrences && Array.isArray(item.dimensional_defect_occurrences)) {
+        enhancedItem.mapped_dimensional_defect_occurrences = mapDefectOccurrences(
+          item.dimensional_defect_occurrences,
+          defectMap,
+          "dimensional"
+        );
+      }
+
+      return enhancedItem;
+    });
+
+    if (enhancedResults.length === 0) {
       return "No production reports found matching your query.";
     }
 
     // Format the results for better readability
-    const formattedResults = results.map((item) => ({
+    const formattedResults = enhancedResults.map((item) => ({
       batch_id: item.batch_id,
       component_name: item.component_name,
       date: item.date,
       actual_production: item.actual_production,
       ok_parts: item.ok_parts,
       ng_parts: item.ng_parts,
-      defect_occurrences: item.defect_occurrences,
+      defect_occurrences: item.mapped_defect_occurrences,
+      ocr_defect_occurrences: item.mapped_ocr_defect_occurrences,
+      dimensional_defect_occurrences: item.mapped_dimensional_defect_occurrences,
+      quality: item.Quality,
+      performance: item.Performance,
+      availability: item.Availability
     }));
 
     return JSON.stringify(formattedResults, null, 2);
   } catch (error) {
     console.error("MongoDB query error:", error.message);
     return `Error querying database: ${error.message}`;
+  } finally {
+    if (client) {
+      await client.close();
+    }
   }
 }
 
@@ -83,11 +198,10 @@ function analyzeQuery(query) {
   return {
     isBatchQuery: /batch.*id.*[\w_:\-]+/i.test(query),
     isNGQuery: /ng|not good|defect|reject/i.test(lowerQuery),
-    needsAggregation:
-      /most|max|maximum|highest|lowest|min|minimum|average|sum|total/i.test(
-        lowerQuery
-      ),
+    needsAggregation: /most|max|maximum|highest|lowest|min|minimum|average|sum|total/i.test(lowerQuery),
     isComparative: /more|less|greater|than|compare/i.test(lowerQuery),
+    isComponentList: /component|part|what.*component|which.*component|list.*component/i.test(lowerQuery),
+    isGeneralQuery: /what.*data|which.*data|available.*data|have.*data/i.test(lowerQuery)
   };
 }
 
@@ -157,6 +271,12 @@ function parseQuery(query) {
     ];
   }
 
+  // For general component queries, return all data
+  if (queryAnalysis.isGeneralQuery || queryAnalysis.isComponentList) {
+    // Return all documents for general queries
+    return {};
+  }
+
   return conditions;
 }
 
@@ -170,9 +290,25 @@ async function handleAggregationQuery(collection, queryAnalysis) {
       { $sort: { ng_parts: -1 } }, // Sort by NG parts descending
       { $limit: 10 },
     ];
+  } else if (queryAnalysis.isComponentList) {
+    // For component listing queries
+    pipeline = [
+      {
+        $group: {
+          _id: "$component_name",
+          total_batches: { $sum: 1 },
+          total_production: { $sum: "$actual_production" },
+          latest_date: { $max: "$date" }
+        }
+      },
+      { $sort: { total_production: -1 } }
+    ];
   } else if (queryAnalysis.needsAggregation) {
     // General aggregation for max/min queries
     pipeline = [{ $sort: { actual_production: -1 } }, { $limit: 10 }];
+  } else {
+    // Default: return recent records
+    pipeline = [{ $sort: { date: -1 } }, { $limit: 20 }];
   }
 
   return await collection.aggregate(pipeline).toArray();
@@ -224,20 +360,6 @@ function getDateFilter(period) {
   return filters[period.toLowerCase()];
 }
 
-// Test the Gemini API
-async function testGeminiAPI() {
-  try {
-    const testPrompt = "Hello, this is a test message.";
-    const result = await model.generateContent(testPrompt);
-    const response = await result.response;
-    console.log("Gemini API test successful");
-    return true;
-  } catch (error) {
-    console.error("Gemini API test failed:", error.message);
-    return false;
-  }
-}
-
 // Initialize the production agent
 export async function initializeProductionAgent() {
   console.log("Initializing Production Agent...");
@@ -251,6 +373,11 @@ export async function initializeProductionAgent() {
     const client = new MongoClient(process.env.MONGODB_URI);
     await client.connect();
     console.log("Connected to MongoDB successfully");
+
+    // Test defect collection access
+    const defectMap = await getDefectInfo(client);
+    console.log(`Loaded ${Object.keys(defectMap).length} defect definitions`);
+
     await client.close();
   } catch (error) {
     console.error("MongoDB connection failed:", error.message);
@@ -274,20 +401,30 @@ export async function initializeProductionAgent() {
         You are a helpful AI assistant specialized in production data analysis.
         Use the provided production data to answer the user's question.
         
-        User Question: ${question}
+        User Question: "${question}"
         
         Production Data from MongoDB:
         ${dbResults}
         
         Instructions:
         1. Analyze the production data to answer the question precisely
-        2. If asked about specific batch IDs, make sure to match them exactly
-        3. For comparative questions (most NG parts, highest production), provide clear rankings
-        4. Be specific about dates, batch IDs, and metrics
-        5. If you have a final answer, prefix it with "FINAL ANSWER:"
-        6. Current time: ${new Date().toISOString()}
+        2. If asked about components, list all available component names from the provided production data
+        3. If asked about what data is available, provide a summary of components, date ranges, and key metrics
+        4. If asked about specific batch IDs, make sure to match them exactly
+        5. For comparative questions (most NG parts, highest production), provide clear rankings
+        6. Be specific about dates, batch IDs, and metrics
+        7. When discussing defects, use the mapped defect information (defect_class names) instead of just IDs
+        8. If you have a final answer, prefix it with "FINAL ANSWER:"
+        9. Current time: ${new Date().toISOString()}
         
         Important: When analyzing NG parts, look at the 'ng_parts' field specifically.
+        Important: Defect occurrences are now mapped to their actual names for better understanding.
+        Example: Instead of saying "defect_id 1 has 16661 occurrences", say "Ink_Spot defect has 16,661 occurrences".
+        
+        For component-related questions:
+        - List all unique component names found in the data
+        - Mention the date range and number of batches for each component
+        - Provide total production numbers if available
       `;
 
       // Generate content with Gemini
