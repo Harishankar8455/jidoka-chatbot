@@ -111,22 +111,22 @@ function mapDefectOccurrences(defectOccurrences, defectMap, defectType) {
 async function queryComponentDetails(componentName, client) {
   try {
     const db = client.db(process.env.DB_NAME || "test");
-    
+
     // Use the component name as the collection name
     const componentsCollection = db.collection(componentName);
-    
+
     console.log(`Querying collection: ${componentName}`);
-    
+
     // Query all documents from this component collection
     const components = await componentsCollection.find({}).limit(20).toArray();
-    
+
     if (components.length === 0) {
       return `No data found in collection '${componentName}'. The collection exists but is empty.`;
     }
-    
+
     // Get defect information for mapping
     const defectMap = await getDefectInfo(client);
-    
+
     // Format component data for better readability
     const formattedComponents = components.map(component => {
       // SAFE TIMESTAMP PARSING
@@ -147,7 +147,7 @@ async function queryComponentDetails(componentName, client) {
         console.error("Error parsing timestamp:", error.message);
         timestamp = 'Invalid timestamp';
       }
-      
+
       const formattedComponent = {
         component_id: component.component_id,
         batch_id: component.batch_id,
@@ -159,7 +159,7 @@ async function queryComponentDetails(componentName, client) {
         config_audit_id: component.config_audit_id,
         total_records_found: components.length
       };
-      
+
       // Process images if available
       if (component.images && Array.isArray(component.images)) {
         formattedComponent.images = component.images.map(image => {
@@ -179,7 +179,7 @@ async function queryComponentDetails(componentName, client) {
             model_name: image.model_name,
             legend: image.legend || 'No legend'
           };
-          
+
           // Process rejection_cause (object_detection defects)
           if (image.rejection_cause && image.rejection_cause.algorithm) {
             const algo = image.rejection_cause.algorithm;
@@ -191,7 +191,7 @@ async function queryComponentDetails(componentName, client) {
               num_detections: algo.num_detections || 0
             };
           }
-          
+
           // Process ocr_metadata (OCR defects)
           if (image.ocr_metadata && image.ocr_metadata.algorithm) {
             formattedImage.ocr_defects = (image.ocr_metadata.algorithm || []).map(ocr => ({
@@ -205,7 +205,7 @@ async function queryComponentDetails(componentName, client) {
               dimension_id: ocr.dimension_id
             }));
           }
-          
+
           // Process dimensional_metadata (dimensional defects)
           if (image.dimensional_metadata && image.dimensional_metadata.algorithm) {
             formattedImage.dimensional_defects = (image.dimensional_metadata.algorithm || []).map(dim => ({
@@ -218,18 +218,18 @@ async function queryComponentDetails(componentName, client) {
               measurement_tolerance: dim.measurement_tolerance
             }));
           }
-          
+
           return formattedImage;
         });
       }
-      
+
       return formattedComponent;
     });
-    
+
     return JSON.stringify(formattedComponents, null, 2);
   } catch (error) {
     console.error("Error querying component details:", error.message);
-    
+
     // More specific error messages
     if (error.message.includes('collection name must be a string')) {
       return `Error: Invalid component name '${componentName}'. Please check the component name and try again.`;
@@ -254,7 +254,7 @@ async function queryMongoDB(query) {
 
     // Check if this is a component-specific query
     const componentName = extractComponentName(query);
-    
+
     if (componentName) {
       return await queryComponentDetails(componentName, client);
     }
@@ -355,19 +355,19 @@ function extractComponentName(query) {
   if (singleQuoteMatch) {
     return singleQuoteMatch[1];
   }
-  
+
   // Look for component names in double quotes
   const doubleQuoteMatch = query.match(/"([^"]+)"/);
   if (doubleQuoteMatch) {
     return doubleQuoteMatch[1];
   }
-  
+
   // Look for component names in asterisks
   const asteriskMatch = query.match(/\*([^*]+)\*/);
   if (asteriskMatch) {
     return asteriskMatch[1];
   }
-  
+
   return null;
 }
 
