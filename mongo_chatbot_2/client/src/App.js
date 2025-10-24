@@ -145,10 +145,10 @@ function App() {
               <p>Welcome to the Production Data Assistant!</p>
               <p>Try asking questions like:</p>
               <ul>
-                <li>"Show me production reports from yesterday"</li>
-                <li>"What batches had defects this week?"</li>
-                <li>"Give me the production data for 24th feb?"</li>
-                <li>"Show me the production report for the shift A"</li>
+                <li>`Show inspection summary of the component 'Component_Name'`</li>
+                <li>`What is the status of "9PLY_NORMAL"?`</li>
+                <li>`Give me the production data for 24th feb?`</li>
+                <li>`Show me the production report for the shift A`</li>
               </ul>
             </div>
           ) : (

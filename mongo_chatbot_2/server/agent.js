@@ -403,6 +403,7 @@ function isCommonWord(word) {
 function parseQuery(query) {
   const conditions = {};
   const queryAnalysis = analyzeQuery(query);
+  const lowerQuery = query.toLowerCase();
 
   // Enhanced Batch ID matching - handles complex IDs with colons and underscores
   const batchMatch = query.match(/(batch|lot)[:\s]*([\w_:\-]+)/i);
@@ -425,22 +426,23 @@ function parseQuery(query) {
   if (componentMatch)
     conditions.component_name = { $regex: componentMatch[2], $options: "i" };
 
-  // Date filtering - enhanced to handle dates in batch IDs
-  const dateMatch = query.match(
-    /(today|yesterday|this week|last week|this month|last month|\d{2}[_\/\-]\d{2}[_\/\-]\d{4})/i
-  );
-  if (dateMatch) {
-    if (dateMatch[1].match(/\d{2}[_\/\-]\d{2}[_\/\-]\d{4}/)) {
-      // Extract date from batch ID format like 24_02_2025
-      const dateStr = dateMatch[1].replace(/_/g, "-");
-      const dateObj = new Date(dateStr);
-      if (!isNaN(dateObj.getTime())) {
-        const startOfDay = new Date(dateObj.setHours(0, 0, 0, 0));
-        const endOfDay = new Date(dateObj.setHours(23, 59, 59, 999));
-        conditions.date = { $gte: startOfDay, $lte: endOfDay };
-      }
-    } else {
-      conditions.date = getDateFilter(dateMatch[1]);
+  // FIXED: Date filtering - prioritize relative dates over batch ID date patterns
+  const relativeDateMatch = query.match(/(today|yesterday|this week|last week|this month|last month)/i);
+  const absoluteDateMatch = query.match(/\b(\d{2}[_\/\-]\d{2}[_\/\-]\d{4})\b/i);
+
+  if (relativeDateMatch) {
+    // Handle relative dates first (today, yesterday, etc.)
+    console.log("Detected relative date period:", relativeDateMatch[1]);
+    conditions.date = getDateFilter(relativeDateMatch[1]);
+  } else if (absoluteDateMatch) {
+    // Handle absolute dates in batch ID format like 24_02_2025
+    console.log("Detected absolute date in batch ID format:", absoluteDateMatch[1]);
+    const dateStr = absoluteDateMatch[1].replace(/_/g, "-");
+    const dateObj = new Date(dateStr);
+    if (!isNaN(dateObj.getTime())) {
+      const startOfDay = new Date(dateObj.setHours(0, 0, 0, 0));
+      const endOfDay = new Date(dateObj.setHours(23, 59, 59, 999));
+      conditions.date = { $gte: startOfDay, $lte: endOfDay };
     }
   }
 
@@ -512,39 +514,45 @@ async function handleAggregationQuery(collection, queryAnalysis) {
 function getDateFilter(period) {
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
   const startOfYesterday = new Date(startOfDay);
   startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+  const endOfYesterday = new Date(startOfDay);
+  endOfYesterday.setMilliseconds(-1); // One millisecond before today starts
 
   const startOfWeek = new Date(startOfDay);
   startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
 
   const startOfLastWeek = new Date(startOfWeek);
   startOfLastWeek.setDate(startOfLastWeek.getDate() - 7);
+  const endOfLastWeek = new Date(startOfWeek);
+  endOfLastWeek.setMilliseconds(-1);
 
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+  const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
   const filters = {
     today: {
       $gte: startOfDay,
-      $lte: now,
+      $lte: endOfDay,
     },
     yesterday: {
       $gte: startOfYesterday,
-      $lte: startOfDay,
+      $lte: endOfYesterday,
     },
     "this week": {
       $gte: startOfWeek,
-      $lte: now,
+      $lte: endOfDay,
     },
     "last week": {
       $gte: startOfLastWeek,
-      $lte: startOfWeek,
+      $lte: endOfLastWeek,
     },
     "this month": {
       $gte: startOfMonth,
-      $lte: now,
+      $lte: endOfDay,
     },
     "last month": {
       $gte: startOfLastMonth,
@@ -554,7 +562,6 @@ function getDateFilter(period) {
 
   return filters[period.toLowerCase()];
 }
-
 // Initialize the production agent
 export async function initializeProductionAgent() {
   console.log("Initializing Production Agent...");
@@ -594,13 +601,16 @@ export async function initializeProductionAgent() {
 
       if (hasComponentKeywords && !componentName) {
         return `I can help you with component inspection details! Please specify the component name using quotes or asterisks, for example:
-        
-- Show me details for 'RC_180ml'
-- What is the status of "9PLY_NORMAL"?
-- Display inspection results for *Marie*
-- Show defects for 'PCN_PRT_25FT'
+          - Please use this format to get exact results:    
+          - use single quotes, double quotes, or asterisks to specify the component name.
+          
+          Here are some examples of valid component queries:
+          - Show inspection summary of the component 'Component_Name'
+          - What is the status of "9PLY_NORMAL"?
+          - Display inspection results for *Marie*
+          - Show defects for 'PCN_PRT_25FT'
 
-This helps me identify exactly which component you're asking about.`;
+          This helps me identify exactly which component you're asking about.`;
       }
 
       // First, query MongoDB
@@ -630,13 +640,18 @@ This helps me identify exactly which component you're asking about.`;
           - dimensional_defects: Found in dimensional_metadata (measurement issues)
           
           Instructions:
-          1. Analyze the component inspection data to answer the question precisely
-          2. Explain the overall component status and individual image results
-          3. Describe any defects found in object detection, OCR, or dimensional measurements
-          4. Be specific about timestamps, batch IDs, and inspection results
-          5. If multiple components are found, summarize each one clearly
-          6. If no components are found, suggest checking the component name spelling
-          7. If you have a final answer, prefix it with "FINAL ANSWER:"
+          1. Always prioritize brief and concise answers. Get straight to the point without unnecessary elaboration.
+          2. Analyze the component inspection data to answer the question precisely
+          3. Explain the overall component status and individual image results
+          4. Describe any defects found in object detection, OCR, or dimensional measurements
+          5. Be specific about timestamps, batch IDs, and inspection results
+          6. If multiple components are found, summarize each one clearly
+          7. If no components are found, suggest checking the component name spelling
+          8. When offering more information, use natural phrasing like:
+              - "Would you like me to go into more detail about any of this?"
+              - "I can explain this further if you'd like."
+              - "Let me know if you need more specifics on this topic."
+          9. If you have a final answer, prefix it with "FINAL ANSWER:"
           
           Current time: ${new Date().toISOString()}
         `;
@@ -651,15 +666,19 @@ This helps me identify exactly which component you're asking about.`;
           ${dbResults}
           
           Instructions:
-          1. Analyze the production data to answer the question precisely
+          1. Analyze the production data to answer the question precisely. Get straight to the point without unnecessary elaboration.
           2. If asked about components, list all available component names from the provided production data
           3. If asked about what data is available, provide a summary of components, date ranges, and key metrics
           4. If asked about specific batch IDs, make sure to match them exactly
           5. For comparative questions (most NG parts, highest production), provide clear rankings
           6. Be specific about dates, batch IDs, and metrics
           7. When discussing defects, use the mapped defect information (defect_class names) instead of just IDs
-          8. If you have a final answer, prefix it with "FINAL ANSWER:"
-          9. Current time: ${new Date().toISOString()}
+          8. When offering more information, use natural phrasing like:
+              - "Would you like me to go into more detail about any of this?"
+              - "I can explain this further if you'd like."
+              - "Let me know if you need more specifics on this topic."
+          9. If you have a final answer, prefix it with "FINAL ANSWER:"
+          10. Current time: ${new Date().toISOString()}
           
           Important: When analyzing NG parts, look at the 'ng_parts' field specifically.
           Important: Defect occurrences are now mapped to their actual names for better understanding.
